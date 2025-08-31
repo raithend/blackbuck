@@ -392,6 +392,10 @@ export default function PhylogeneticTreeEditPage() {
 											verticalScrollbarSize: 14,
 											horizontalScrollbarSize: 14,
 										},
+										stickyScroll: {
+											enabled: true,
+											maxLineCount: 8,
+										},
 									}}
 									onMount={(editor, monaco) => {
 										console.log("MonacoEditor onMount");
