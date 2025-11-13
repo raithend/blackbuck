@@ -47,7 +47,7 @@ export async function GET(request: NextRequest) {
 
 		// 2. Claude APIに分類名と配列を送信
 		const message = await anthropic.messages.create({
-			model: "claude-opus-4-20250514",
+			model: "claude-sonnet-4-5-20250929",
 			max_tokens: 1000,
 			messages: [
 				{
