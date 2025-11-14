@@ -2,6 +2,11 @@ import { createClient } from "@/app/lib/supabase-server";
 import type { NextRequest } from "next/server";
 import { NextResponse } from "next/server";
 
+// Node.js Runtimeを使用し、タイムアウトを延長
+// 注意: Vercel Hobbyプランでは10秒、Proプランでは60秒、Enterpriseプランでは300秒が最大
+export const runtime = "nodejs";
+export const maxDuration = 10; // Hobbyプラン対応: 10秒（Proプランにアップグレードする場合は60に変更）
+
 export async function POST(
 	request: NextRequest,
 	{ params }: { params: Promise<{ name: string }> },
@@ -108,29 +113,49 @@ children:
 - post_branch: 非リーフノードだが投稿取得に含めたい場合にtrueを設定
 - link_only: この系統樹はlinked_treeのみを参照し、自身のnameは投稿取得対象にしない場合にtrueを設定`;
 
-		// Claude APIにリクエスト
-		const claudeResponse = await fetch(
-			"https://api.anthropic.com/v1/messages",
-			{
-				method: "POST",
-				headers: {
-					"Content-Type": "application/json",
-					"x-api-key": ANTHROPIC_API_KEY,
-					"anthropic-version": "2023-06-01",
+		// Claude APIにリクエスト（タイムアウト設定：8秒 - Hobbyプランの10秒制限に対応）
+		const controller = new AbortController();
+		const timeoutId = setTimeout(() => controller.abort(), 8000); // 8秒でタイムアウト（Hobbyプラン対応）
+
+		let claudeResponse: Response;
+		try {
+			claudeResponse = await fetch(
+				"https://api.anthropic.com/v1/messages",
+				{
+					method: "POST",
+					headers: {
+						"Content-Type": "application/json",
+						"x-api-key": ANTHROPIC_API_KEY,
+						"anthropic-version": "2023-06-01",
+					},
+					body: JSON.stringify({
+						model: "claude-sonnet-4-5-20250929",
+						max_tokens: 2000, // Hobbyプラン対応: トークン数を減らして処理時間を短縮
+						temperature: 0.1,
+						messages: [
+							{
+								role: "user",
+								content: prompt,
+							},
+						],
+					}),
+					signal: controller.signal,
 				},
-				body: JSON.stringify({
-					model: "claude-sonnet-4-5-20250929",
-					max_tokens: 4000,
-					temperature: 0.1,
-					messages: [
-						{
-							role: "user",
-							content: prompt,
-						},
-					],
-				}),
-			},
-		);
+			);
+		} catch (error) {
+			clearTimeout(timeoutId);
+			if (error instanceof Error && error.name === "AbortError") {
+				return NextResponse.json(
+					{
+						error: "Claude APIの呼び出しがタイムアウトしました。処理に時間がかかりすぎています。",
+					},
+					{ status: 504 },
+				);
+			}
+			throw error;
+		} finally {
+			clearTimeout(timeoutId);
+		}
 
 		if (!claudeResponse.ok) {
 			const errorText = await claudeResponse.text();
