@@ -5,7 +5,7 @@ import { cn } from "@/app/lib/utils";
 import { ImagePlus, X } from "lucide-react";
 import Image from "next/image";
 import { useCallback, useState, useEffect, useRef } from "react";
-import { useDropzone } from "react-dropzone";
+import { useDropzone, type FileRejection } from "react-dropzone";
 
 interface ImageUploadProps {
 	value: File[];
@@ -99,7 +99,7 @@ export function ImageUpload({ value, onChange }: ImageUploadProps) {
 	);
 
 	const onDropRejected = useCallback(
-		(fileRejections: Array<{ file: File; errors: Array<{ code: string; message: string }> }>) => {
+		(fileRejections: FileRejection[]) => {
 			for (const { file, errors } of fileRejections) {
 				console.error("ファイルが拒否されました:", file.name, errors);
 				for (const error of errors) {
