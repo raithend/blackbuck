@@ -12,6 +12,7 @@ import {
 import { Input } from "@/app/components/ui/input";
 import { Textarea } from "@/app/components/ui/textarea";
 import { useUser } from "@/app/contexts/user-context";
+import { removeExifData } from "@/app/lib/image-utils";
 import { useState } from "react";
 
 interface PostDialogProps {
@@ -35,8 +36,26 @@ export function PostDialog({ onPost }: PostDialogProps) {
 	const { session } = useUser();
 
 	const uploadToS3 = async (file: File): Promise<string> => {
+		// EXIFデータ（撮影地・撮影機材情報）を削除
+		// これによりファイルサイズも削減されます
+		let processedFile: File;
+		try {
+			processedFile = await removeExifData(file, 0.92);
+		} catch (error) {
+			console.warn("EXIFデータの削除に失敗しました。元のファイルを使用します:", error);
+			processedFile = file;
+		}
+
+		// ファイルサイズチェック（4MB以下 - Vercelの4.5MB制限に対応）
+		const maxSize = 4 * 1024 * 1024; // 4MB
+		if (processedFile.size > maxSize) {
+			throw new Error(
+				`ファイルサイズが大きすぎます。最大4MBまで対応しています。現在のファイルサイズ: ${(processedFile.size / 1024 / 1024).toFixed(2)}MB`,
+			);
+		}
+
 		const formData = new FormData();
-		formData.append("file", file);
+		formData.append("file", processedFile);
 
 		// 認証トークンを取得
 		const supabase = await import("@/app/lib/supabase-browser").then((m) =>
@@ -61,6 +80,13 @@ export function PostDialog({ onPost }: PostDialogProps) {
 		});
 
 		if (!response.ok) {
+			// 413エラーの場合、特別なメッセージを表示
+			if (response.status === 413) {
+				throw new Error(
+					`ファイルサイズが大きすぎます。Vercelの制限により、4MB以下のファイルのみアップロードできます。現在のファイルサイズ: ${(file.size / 1024 / 1024).toFixed(2)}MB`,
+				);
+			}
+
 			const errorData = await response
 				.json()
 				.catch(() => ({ error: "不明なエラー" }));

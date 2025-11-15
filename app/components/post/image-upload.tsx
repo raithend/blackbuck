@@ -103,6 +103,7 @@ export function ImageUpload({ value, onChange }: ImageUploadProps) {
 			"image/*": [".jpeg", ".jpg", ".png", ".gif"],
 		},
 		onDrop,
+		maxSize: 4 * 1024 * 1024, // 4MB - Vercelの4.5MB制限に対応
 	});
 
 	const handleRemove = (index: number) => {
