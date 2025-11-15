@@ -1,17 +1,26 @@
 /**
- * 画像からEXIFデータを削除するユーティリティ関数
- * Canvas APIを使用して画像を再描画することで、EXIFデータ（撮影地・撮影機材情報など）を削除します
+ * 画像からEXIFデータを削除し、必要に応じてリサイズ・圧縮するユーティリティ関数
+ * 
+ * 注意: EXIFデータ自体は通常数KB〜数十KB程度と小さく、ファイルサイズ削減の主な目的ではありません。
+ * この関数の主な目的は：
+ * 1. プライバシー保護（撮影地情報の削除）
+ * 2. ファイルサイズ削減（リサイズ・圧縮による）
+ * 
+ * Canvas APIを使用して画像を再描画することで、EXIFデータ（撮影地・撮影機材情報など）を削除し、
+ * 同時にリサイズ・圧縮を行うことでファイルサイズを削減します。
  */
 
 /**
- * 画像ファイルからEXIFデータを削除し、新しいFileオブジェクトを返す
+ * 画像ファイルからEXIFデータを削除し、必要に応じてリサイズ・圧縮して新しいFileオブジェクトを返す
  * @param file 元の画像ファイル
- * @param quality JPEG品質（0.0-1.0、デフォルト: 0.92）
- * @returns EXIFデータが削除された新しいFileオブジェクト
+ * @param maxSize 最大ファイルサイズ（バイト、デフォルト: 4MB）
+ * @param maxDimension 最大画像サイズ（幅または高さの最大値、デフォルト: 1920px）
+ * @returns EXIFデータが削除され、必要に応じてリサイズ・圧縮された新しいFileオブジェクト
  */
 export async function removeExifData(
 	file: File,
-	quality: number = 0.92,
+	maxSize: number = 4 * 1024 * 1024, // 4MB
+	maxDimension: number = 1920, // 最大1920px
 ): Promise<File> {
 	return new Promise((resolve, reject) => {
 		const reader = new FileReader();
@@ -20,57 +29,106 @@ export async function removeExifData(
 			const img = new Image();
 			img.onload = () => {
 				try {
-					// Canvasを作成
-					const canvas = document.createElement("canvas");
-					const ctx = canvas.getContext("2d");
+					// 元のファイル名と拡張子を保持
+					const fileName = file.name;
+					
+					// MIMEタイプを決定（常にJPEGに変換してファイルサイズを削減）
+					const mimeType = "image/jpeg";
 
-					if (!ctx) {
-						reject(new Error("Canvas context not available"));
-						return;
-					}
-
-					// 画像のサイズを取得
-					canvas.width = img.width;
-					canvas.height = img.height;
-
-					// 画像をCanvasに描画（これによりEXIFデータが削除される）
-					ctx.drawImage(img, 0, 0);
-
-					// CanvasからBlobを取得
-					canvas.toBlob(
-						(blob) => {
-							if (!blob) {
-								reject(new Error("Failed to create blob"));
+					// リサイズと圧縮を繰り返してファイルサイズを制限内に収める
+					const compressImage = (
+						targetWidth: number,
+						targetHeight: number,
+						quality: number,
+					): Promise<File> => {
+						return new Promise((resolveCompress, rejectCompress) => {
+							// Canvasを作成
+							const tempCanvas = document.createElement("canvas");
+							const tempCtx = tempCanvas.getContext("2d");
+							if (!tempCtx) {
+								rejectCompress(new Error("Canvas context not available"));
 								return;
 							}
 
-							// 元のファイル名と拡張子を保持
-							const fileName = file.name;
-							const fileExtension = fileName.split(".").pop()?.toLowerCase() || "jpg";
-							
-							// MIMEタイプを決定
-							let mimeType = "image/jpeg";
-							if (fileExtension === "png") {
-								mimeType = "image/png";
-							} else if (fileExtension === "gif") {
-								mimeType = "image/gif";
-							}
+							tempCanvas.width = targetWidth;
+							tempCanvas.height = targetHeight;
+							tempCtx.imageSmoothingEnabled = true;
+							tempCtx.imageSmoothingQuality = "high";
+							tempCtx.drawImage(img, 0, 0, targetWidth, targetHeight);
 
-							// 新しいFileオブジェクトを作成
-							const newFile = new File(
-								[blob],
-								fileName,
-								{
-									type: mimeType,
-									lastModified: Date.now(),
+							tempCanvas.toBlob(
+								(blob) => {
+									if (!blob) {
+										rejectCompress(new Error("Failed to create blob"));
+										return;
+									}
+
+									// ファイルサイズが制限内の場合
+									if (blob.size <= maxSize) {
+										const newFile = new File(
+											[blob],
+											fileName,
+											{
+												type: mimeType,
+												lastModified: Date.now(),
+											},
+										);
+										resolveCompress(newFile);
+									} else if (quality > 0.3) {
+										// 品質を下げて再試行（最低0.3まで）
+										compressImage(targetWidth, targetHeight, quality - 0.1)
+											.then(resolveCompress)
+											.catch(rejectCompress);
+									} else if (targetWidth > 800 || targetHeight > 800) {
+										// 品質が0.3以下でも4MBを超える場合、さらにリサイズ
+										const aspectRatio = targetWidth / targetHeight;
+										let newWidth = Math.min(targetWidth * 0.8, 800);
+										let newHeight = newWidth / aspectRatio;
+										if (newHeight > 800) {
+											newHeight = 800;
+											newWidth = 800 * aspectRatio;
+										}
+										compressImage(newWidth, newHeight, 0.7)
+											.then(resolveCompress)
+											.catch(rejectCompress);
+									} else {
+										// それでも4MBを超える場合は、現在のサイズで返す
+										// （実際にはこのケースは稀）
+										const newFile = new File(
+											[blob],
+											fileName,
+											{
+												type: mimeType,
+												lastModified: Date.now(),
+											},
+										);
+										resolveCompress(newFile);
+									}
 								},
+								mimeType,
+								quality,
 							);
+						});
+					};
 
-							resolve(newFile);
-						},
-						file.type.startsWith("image/png") ? "image/png" : "image/jpeg",
-						quality,
-					);
+					// 画像のサイズを計算（アスペクト比を保持）
+					let width = img.width;
+					let height = img.height;
+
+					// 最大サイズを超える場合はリサイズ
+					if (width > maxDimension || height > maxDimension) {
+						const aspectRatio = width / height;
+						if (width > height) {
+							width = maxDimension;
+							height = maxDimension / aspectRatio;
+						} else {
+							height = maxDimension;
+							width = maxDimension * aspectRatio;
+						}
+					}
+
+					// 初期品質0.92から開始
+					compressImage(width, height, 0.92).then(resolve).catch(reject);
 				} catch (error) {
 					reject(
 						error instanceof Error
@@ -104,13 +162,15 @@ export async function removeExifData(
 /**
  * 複数の画像ファイルからEXIFデータを削除
  * @param files 元の画像ファイルの配列
- * @param quality JPEG品質（0.0-1.0、デフォルト: 0.92）
- * @returns EXIFデータが削除された新しいFileオブジェクトの配列
+ * @param maxSize 最大ファイルサイズ（バイト、デフォルト: 4MB）
+ * @param maxDimension 最大画像サイズ（幅または高さの最大値、デフォルト: 1920px）
+ * @returns EXIFデータが削除され、必要に応じてリサイズ・圧縮された新しいFileオブジェクトの配列
  */
 export async function removeExifDataFromFiles(
 	files: File[],
-	quality: number = 0.92,
+	maxSize: number = 4 * 1024 * 1024, // 4MB
+	maxDimension: number = 1920, // 最大1920px
 ): Promise<File[]> {
-	return Promise.all(files.map((file) => removeExifData(file, quality)));
+	return Promise.all(files.map((file) => removeExifData(file, maxSize, maxDimension)));
 }
 

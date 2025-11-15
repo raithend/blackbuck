@@ -54,21 +54,22 @@ export function PostEditDialog({ post, onEdit, onClose }: PostEditDialogProps) {
 	}, [post]);
 
 	const uploadToS3 = async (file: File): Promise<string> => {
-		// EXIFデータ（撮影地・撮影機材情報）を削除
-		// これによりファイルサイズも削減されます
+		// EXIFデータ（撮影地・撮影機材情報）を削除し、必要に応じてリサイズ・圧縮
+		// 注意: EXIFデータ自体は小さく（数KB程度）、ファイルサイズ削減の主な目的はリサイズ・圧縮です
+		// EXIF削除は主にプライバシー保護のためです
+		const maxSize = 4 * 1024 * 1024; // 4MB - Vercelの4.5MB制限に対応
 		let processedFile: File;
 		try {
-			processedFile = await removeExifData(file, 0.92);
+			processedFile = await removeExifData(file, maxSize, 1920);
 		} catch (error) {
 			console.warn("EXIFデータの削除に失敗しました。元のファイルを使用します:", error);
 			processedFile = file;
 		}
 
-		// ファイルサイズチェック（4MB以下 - Vercelの4.5MB制限に対応）
-		const maxSize = 4 * 1024 * 1024; // 4MB
+		// ファイルサイズチェック（処理後も4MBを超える場合はエラー）
 		if (processedFile.size > maxSize) {
 			throw new Error(
-				`ファイルサイズが大きすぎます。最大4MBまで対応しています。現在のファイルサイズ: ${(processedFile.size / 1024 / 1024).toFixed(2)}MB`,
+				`ファイルサイズが大きすぎます。最大4MBまで対応しています。現在のファイルサイズ: ${(processedFile.size / 1024 / 1024).toFixed(2)}MB。画像をさらに圧縮するか、別の画像を選択してください。`,
 			);
 		}
 

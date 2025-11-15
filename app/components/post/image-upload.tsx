@@ -98,12 +98,33 @@ export function ImageUpload({ value, onChange }: ImageUploadProps) {
 		[value, onChange, isChrome],
 	);
 
+	const onDropRejected = useCallback(
+		(fileRejections: Array<{ file: File; errors: Array<{ code: string; message: string }> }>) => {
+			for (const { file, errors } of fileRejections) {
+				console.error("ファイルが拒否されました:", file.name, errors);
+				for (const error of errors) {
+					if (error.code === "file-too-large") {
+						alert(
+							`${file.name}: ファイルサイズが大きすぎます。EXIFデータを削除するとサイズが小さくなる可能性がありますが、現在のファイルサイズ（${(file.size / 1024 / 1024).toFixed(2)}MB）が大きすぎます。`,
+						);
+					} else {
+						alert(`${file.name}: ${error.message}`);
+					}
+				}
+			}
+		},
+		[],
+	);
+
 	const { getRootProps, getInputProps } = useDropzone({
 		accept: {
 			"image/*": [".jpeg", ".jpg", ".png", ".gif"],
 		},
 		onDrop,
-		maxSize: 4 * 1024 * 1024, // 4MB - Vercelの4.5MB制限に対応
+		onDropRejected,
+		// EXIFデータを含む元のファイルが大きい可能性があるため、一時的に10MBに設定
+		// アップロード時にEXIF削除とサイズチェックを行う
+		maxSize: 10 * 1024 * 1024, // 10MB（EXIF削除前のサイズを考慮）
 	});
 
 	const handleRemove = (index: number) => {
