@@ -90,16 +90,26 @@ export async function GET(
 			supabase = await createClient();
 		}
 
-		// 分類情報を取得（存在しない場合はnull）
-		const { data: classification, error: classificationError } = await supabase
+		// 分類情報を取得（存在しない場合はnull、複数レコードの可能性を考慮）
+		const { data: classifications, error: classificationError } = await supabase
 			.from("classifications")
 			.select("*")
-			.eq("name", decodedName)
-			.single();
+			.eq("name", decodedName);
 
 		// 分類が見つからない場合はエラーにせず、nullとして扱う
 		if (classificationError && classificationError.code !== "PGRST116") {
 			throw classificationError;
+		}
+
+		// 複数のレコードが存在する場合、最初のレコードを使用
+		const classification =
+			classifications && classifications.length > 0
+				? classifications[0]
+				: null;
+		if (classifications && classifications.length > 1) {
+			console.warn(
+				`複数のレコードが存在します: ${decodedName} (${classifications.length}件)。最初のレコードを使用します。`,
+			);
 		}
 
 		// 投稿データの取得が必要な場合のみ実行
@@ -380,17 +390,88 @@ export async function PUT(
 			return NextResponse.json({ error: "認証が必要です" }, { status: 401 });
 		}
 
-		// 分類が存在するかチェック
-		const { data: existingClassification, error: checkError } = await supabase
+		// 分類が存在するかチェック（複数レコードの可能性を考慮）
+		// .single()を使わず、.maybeSingle()または通常のselectで取得
+		const { data: existingClassifications, error: checkError } = await supabase
 			.from("classifications")
 			.select("id")
-			.eq("name", decodedName)
-			.single();
+			.eq("name", decodedName);
 
 		let classification: unknown;
 		let operationError: unknown;
 
-		if (checkError && checkError.code === "PGRST116") {
+		// エラーが発生した場合（PGRST116以外のエラー）
+		if (checkError && checkError.code !== "PGRST116") {
+			console.error("Classification check error:", checkError);
+			return NextResponse.json(
+				{ error: "Failed to check classification" },
+				{ status: 500 },
+			);
+		}
+
+		// 複数のレコードが存在する場合（重複レコード）
+		if (existingClassifications && existingClassifications.length > 1) {
+			console.error(
+				`複数のレコードが存在します: ${decodedName} (${existingClassifications.length}件)`,
+			);
+			// 最初のレコードを使用して更新（重複を解消するため）
+			const firstClassification = existingClassifications[0];
+			const updatePayload: Record<string, unknown> = {
+				english_name: body.english_name,
+				scientific_name: body.scientific_name,
+				description: body.description,
+				appearance_period: body.appearance_period,
+				extinction_period: body.extinction_period,
+				updated_at: new Date().toISOString(),
+			};
+
+			const { data: updatedClassification, error: updateError } = await supabase
+				.from("classifications")
+				.update(updatePayload)
+				.eq("id", firstClassification.id)
+				.select()
+				.single();
+
+			classification = updatedClassification;
+			operationError = updateError;
+
+			// 重複レコードを削除（最初のレコード以外）
+			if (updatedClassification && !updateError) {
+				const duplicateIds = existingClassifications
+					.slice(1)
+					.map((c) => c.id);
+				if (duplicateIds.length > 0) {
+					await supabase
+						.from("classifications")
+						.delete()
+						.in("id", duplicateIds);
+					console.log(
+						`重複レコードを削除しました: ${duplicateIds.length}件`,
+					);
+				}
+			}
+		} else if (existingClassifications && existingClassifications.length === 1) {
+			// 1件のレコードが存在する場合は更新
+			const currentClassification = existingClassifications[0];
+			const updatePayload: Record<string, unknown> = {
+				english_name: body.english_name,
+				scientific_name: body.scientific_name,
+				description: body.description,
+				appearance_period: body.appearance_period,
+				extinction_period: body.extinction_period,
+				updated_at: new Date().toISOString(),
+			};
+
+			const { data: updatedClassification, error: updateError } = await supabase
+				.from("classifications")
+				.update(updatePayload)
+				.eq("id", currentClassification.id)
+				.select()
+				.single();
+
+			classification = updatedClassification;
+			operationError = updateError;
+		} else {
 			// 分類が存在しない場合は作成
 			const insertPayload = {
 				name: decodedName,
@@ -411,40 +492,6 @@ export async function PUT(
 
 			classification = newClassification;
 			operationError = createError;
-		} else if (checkError) {
-			// その他のエラーの場合
-			console.error("Classification check error:", checkError);
-			return NextResponse.json(
-				{ error: "Failed to check classification" },
-				{ status: 500 },
-			);
-		} else {
-			// 分類が存在する場合は更新
-			// 既存データを取得
-			const { data: currentClassification } = await supabase
-				.from("classifications")
-				.select("id")
-				.eq("name", decodedName)
-				.single();
-
-			const updatePayload: Record<string, unknown> = {
-				english_name: body.english_name,
-				scientific_name: body.scientific_name,
-				description: body.description,
-				appearance_period: body.appearance_period,
-				extinction_period: body.extinction_period,
-				updated_at: new Date().toISOString(),
-			};
-
-			const { data: updatedClassification, error: updateError } = await supabase
-				.from("classifications")
-				.update(updatePayload)
-				.eq("name", decodedName)
-				.select()
-				.single();
-
-			classification = updatedClassification;
-			operationError = updateError;
 		}
 
 		if (operationError) {

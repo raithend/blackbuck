@@ -19,23 +19,30 @@ export async function GET(
 
 		const supabase = await createClient();
 
-		// 分類が存在するかチェック
-		const { data: classification, error: classificationError } = await supabase
+		// 分類が存在するかチェック（複数レコードの可能性を考慮）
+		const { data: classifications, error: classificationError } = await supabase
 			.from("classifications")
 			.select("id")
-			.eq("name", decodedName)
-			.single();
+			.eq("name", decodedName);
 
 		if (classificationError && classificationError.code !== "PGRST116") {
 			throw classificationError;
 		}
 
 		// 分類が存在しない場合は空のデータを返す
-		if (!classification) {
+		if (!classifications || classifications.length === 0) {
 			return NextResponse.json({
 				habitatData: null,
 				classification: null,
 			});
+		}
+
+		// 複数のレコードが存在する場合、最初のレコードを使用
+		const classification = classifications[0];
+		if (classifications.length > 1) {
+			console.warn(
+				`複数のレコードが存在します: ${decodedName} (${classifications.length}件)。最初のレコードを使用します。`,
+			);
 		}
 
 		// 生息地データを取得（ユーザー情報も含む）
@@ -106,16 +113,19 @@ export async function POST(
 			return NextResponse.json({ error: "認証が必要です" }, { status: 401 });
 		}
 
-		// 分類が存在するかチェック
-		const { data: classification, error: classificationError } = await supabase
+		// 分類が存在するかチェック（複数レコードの可能性を考慮）
+		const { data: classifications, error: classificationError } = await supabase
 			.from("classifications")
 			.select("id")
-			.eq("name", decodedName)
-			.single();
+			.eq("name", decodedName);
 
 		let classificationId: string;
 
-		if (classificationError && classificationError.code === "PGRST116") {
+		if (classificationError && classificationError.code !== "PGRST116") {
+			throw classificationError;
+		}
+
+		if (!classifications || classifications.length === 0) {
 			// 分類が存在しない場合は作成
 			const { data: newClassification, error: createError } = await supabase
 				.from("classifications")
@@ -132,10 +142,15 @@ export async function POST(
 			}
 
 			classificationId = newClassification.id;
-		} else if (classificationError) {
-			throw classificationError;
 		} else {
-			classificationId = classification.id;
+			// 複数のレコードが存在する場合、最初のレコードを使用
+			// 重複レコードは後で削除する必要があるが、ここでは最初のレコードを使用
+			if (classifications.length > 1) {
+				console.warn(
+					`複数のレコードが存在します: ${decodedName} (${classifications.length}件)。最初のレコードを使用します。`,
+				);
+			}
+			classificationId = classifications[0].id;
 		}
 
 		// 既存の生息地データをチェック
