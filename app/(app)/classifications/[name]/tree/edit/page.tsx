@@ -140,7 +140,7 @@ export default function PhylogeneticTreeEditPage() {
 		};
 	}, []);
 
-		// Wikipediaから系統樹を生成
+	// Wikipediaから系統樹を生成
 	const handleGenerateFromWikipedia = async () => {
 		setIsGenerating(true);
 		try {
@@ -167,30 +167,8 @@ export default function PhylogeneticTreeEditPage() {
 			);
 
 			if (!response.ok) {
-				// エラーレスポンスのContent-Typeをチェック
-				const contentType = response.headers.get("content-type");
-				let errorMessage = "生成に失敗しました";
-				
-				if (contentType && contentType.includes("application/json")) {
-					try {
-						const errorData = await response.json();
-						errorMessage = errorData.error || errorMessage;
-					} catch (parseError) {
-						// JSONパースに失敗した場合はデフォルトメッセージを使用
-						console.error("エラーレスポンスのパースに失敗:", parseError);
-					}
-				} else {
-					// HTMLエラーページやプレーンテキストの場合
-					if (response.status === 504) {
-						errorMessage = "リクエストがタイムアウトしました。処理に時間がかかりすぎています。しばらく待ってから再度お試しください。";
-					} else {
-						const errorText = await response.text();
-						console.error("エラーレスポンス:", errorText);
-						errorMessage = `サーバーエラー (${response.status})`;
-					}
-				}
-				
-				throw new Error(errorMessage);
+				const errorData = await response.json();
+				throw new Error(errorData.error || "生成に失敗しました");
 			}
 
 			const data = await response.json();
