@@ -205,12 +205,15 @@ export default function UserProfilePage({
 					hasMorePosts,
 					isLoadingMorePosts,
 					postsLoading,
+					postsPage,
 					allPostsLength: allPosts.length,
 				});
 			}
 			return;
 		}
 
+		// 最後の10件が表示されたら読み込むように、rootMarginを大きく設定
+		// 1件の投稿カードの高さを約400pxと仮定し、10件分 = 約4000px手前でトリガー
 		const observer = new IntersectionObserver(
 			(entries) => {
 				if (entries[0].isIntersecting && !isHandlingRef.current) {
@@ -226,7 +229,7 @@ export default function UserProfilePage({
 					}, 1000);
 				}
 			},
-			{ threshold: 0.1, rootMargin: "200px" }, // 200px手前でトリガー
+			{ threshold: 0.1, rootMargin: "4000px" }, // 最後の10件が表示されたらトリガー（裏で読み込み）
 		);
 
 		const currentTarget = postsObserverTarget.current;
@@ -639,7 +642,8 @@ export default function UserProfilePage({
 
 				{/* 投稿タブ */}
 				<TabsContent value="posts" className="mt-6">
-					{postsLoading ? (
+					{/* 最初のロード時のみスケルトンを表示 */}
+					{postsLoading && postsPage === 0 && allPosts.length === 0 ? (
 						<div className="space-y-4">
 							{Array.from({ length: 3 }).map((_, i) => (
 								<div key={i} className="animate-pulse">
@@ -680,16 +684,8 @@ export default function UserProfilePage({
 									ref={postsObserverTarget} 
 									className="h-20 flex items-center justify-center py-4"
 									data-testid="infinite-scroll-trigger"
-								>
-									{isLoadingMorePosts && (
-										<div className="animate-pulse text-gray-500">読み込み中...</div>
-									)}
-									{!isLoadingMorePosts && process.env.NODE_ENV === "development" && (
-										<div className="text-xs text-gray-400">
-											スクロールして続きを読み込む ({posts.length}件表示中)
-										</div>
-									)}
-								</div>
+									aria-hidden="true"
+								/>
 							)}
 							{!hasMorePosts && posts.length > 0 && (
 								<div className="text-center py-4 text-gray-500">
