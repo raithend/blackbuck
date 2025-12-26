@@ -53,10 +53,16 @@ export async function POST(request: NextRequest) {
 			);
 		}
 
-		// ファイルサイズチェック（10MB以下）
-		if (file.size > 10 * 1024 * 1024) {
+		// ファイルサイズチェック（4MB以下 - Vercelの4.5MB制限に対応）
+		// Vercelのサーバーレス関数のリクエストボディサイズ制限は4.5MBのため、4MB以下に制限
+		const maxSize = 4 * 1024 * 1024; // 4MB
+		if (file.size > maxSize) {
 			return NextResponse.json(
-				{ error: "ファイルサイズは10MB以下にしてください" },
+				{ 
+					error: `ファイルサイズが大きすぎます。最大4MBまで対応しています。現在のファイルサイズ: ${(file.size / 1024 / 1024).toFixed(2)}MB`,
+					fileSize: file.size,
+					maxSize: maxSize,
+				},
 				{ status: 400 },
 			);
 		}

@@ -161,12 +161,22 @@ children:
 			);
 		}
 
-		// 分類IDを取得（保存用、なくてもエラーにしない）
-		const { data: classification } = await supabase
+		// 分類IDを取得（保存用、なくてもエラーにしない、複数レコードの可能性を考慮）
+		const { data: classifications } = await supabase
 			.from("classifications")
 			.select("id")
-			.eq("name", decodedName)
-			.single();
+			.eq("name", decodedName);
+
+		// 複数のレコードが存在する場合、最初のレコードを使用
+		const classification =
+			classifications && classifications.length > 0
+				? classifications[0]
+				: null;
+		if (classifications && classifications.length > 1) {
+			console.warn(
+				`複数のレコードが存在します: ${decodedName} (${classifications.length}件)。最初のレコードを使用します。`,
+			);
+		}
 
 		if (classification) {
 			// 生成されたYAMLをphylogenetic_treesテーブルにupsert
