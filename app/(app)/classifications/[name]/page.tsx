@@ -814,7 +814,14 @@ export default function ClassificationPage() {
   console.log("classificationData:", classificationData);
   console.log("classification:", classification);
 
-  const posts = displayedPosts;
+  // 投稿を新しい順にソート（取得方法は変更せず、表示時にソート）
+  const posts = useMemo(() => {
+    return [...displayedPosts].sort((a, b) => {
+      const dateA = new Date(a.created_at).getTime();
+      const dateB = new Date(b.created_at).getTime();
+      return dateB - dateA; // 降順（新しい順）
+    });
+  }, [displayedPosts]);
     const postsLoading = postsStreaming && displayedPosts.length === 0;
     const postsError = postsStreamError;
     const mutatePosts = useCallback(() => {}, []);
