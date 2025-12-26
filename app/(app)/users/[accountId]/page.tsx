@@ -116,7 +116,7 @@ export default function UserProfilePage({
 	);
 
 	// ユーザーの投稿を取得（ページネーション対応）
-	const POSTS_PER_PAGE = 50;
+	const POSTS_PER_PAGE = 20;
 	const {
 		data: postsData,
 		error: postsError,
