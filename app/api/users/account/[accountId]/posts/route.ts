@@ -33,6 +33,11 @@ export async function GET(
 			return NextResponse.json({ error: "User not found" }, { status: 404 });
 		}
 
+		// クエリパラメータを取得
+		const { searchParams } = new URL(request.url);
+		const limit = Number.parseInt(searchParams.get("limit") || "50");
+		const offset = Number.parseInt(searchParams.get("offset") || "0");
+
 		// ユーザーの投稿を取得（画像も含む）
 		const { data: posts, error: postsError } = await supabase
 			.from("posts")
@@ -45,7 +50,8 @@ export async function GET(
 				)
 			`)
 			.eq("user_id", user.id)
-			.order("created_at", { ascending: false });
+			.order("created_at", { ascending: false })
+			.range(offset, offset + limit - 1);
 
 		if (postsError) {
 			return NextResponse.json({ error: postsError.message }, { status: 500 });

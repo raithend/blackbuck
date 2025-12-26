@@ -12,7 +12,7 @@ import {
 } from "@/app/components/ui/tabs";
 import { useUser } from "@/app/contexts/user-context";
 import type { PostWithUser, User } from "@/app/types/types";
-import { useEffect, useState } from "react";
+import { useEffect, useState, useRef, useCallback } from "react";
 import useSWR from "swr";
 
 // フェッチャー関数
@@ -77,6 +77,13 @@ export default function UserProfilePage({
 }: { params: Promise<{ accountId: string }> }) {
 	const [accountId, setAccountId] = useState<string | null>(null);
 	const { user: currentUser } = useUser();
+	
+	// 無限スクロール用の状態
+	const [postsPage, setPostsPage] = useState(0);
+	const [allPosts, setAllPosts] = useState<PostWithUser[]>([]);
+	const [isLoadingMorePosts, setIsLoadingMorePosts] = useState(false);
+	const [hasMorePosts, setHasMorePosts] = useState(true);
+	const postsObserverTarget = useRef<HTMLDivElement>(null);
 
 	// paramsを非同期で取得
 	useEffect(() => {
@@ -108,23 +115,142 @@ export default function UserProfilePage({
 		},
 	);
 
-	// ユーザーの投稿を取得
+	// ユーザーの投稿を取得（ページネーション対応）
+	const POSTS_PER_PAGE = 50;
 	const {
 		data: postsData,
 		error: postsError,
 		isLoading: postsLoading,
 		mutate: mutatePosts,
 	} = useSWR<{ posts: PostWithUser[] }>(
-		accountId ? `/api/users/account/${accountId}/posts` : null,
+		accountId ? `/api/users/account/${accountId}/posts?limit=${POSTS_PER_PAGE}&offset=${postsPage * POSTS_PER_PAGE}` : null,
 		authFetcher,
 		{
 			revalidateOnFocus: false,
 			revalidateOnReconnect: true,
 			shouldRetryOnError: false,
 			dedupingInterval: 30000,
-			keepPreviousData: true,
+			keepPreviousData: false, // 無限スクロールでは前のデータを保持しない
 		},
 	);
+
+	// 投稿データが更新されたら、allPostsに追加
+	useEffect(() => {
+		if (postsData?.posts) {
+			if (process.env.NODE_ENV === "development") {
+				console.log("投稿データ更新:", {
+					page: postsPage,
+					receivedCount: postsData.posts.length,
+					hasMorePosts: postsData.posts.length === POSTS_PER_PAGE,
+				});
+			}
+			if (postsPage === 0) {
+				// 最初のページの場合は置き換え
+				setAllPosts(postsData.posts);
+			} else {
+				// 2ページ目以降は追加
+				setAllPosts((prev) => {
+					const newPosts = [...prev, ...postsData.posts];
+					if (process.env.NODE_ENV === "development") {
+						console.log("投稿追加後:", { totalCount: newPosts.length });
+					}
+					return newPosts;
+				});
+			}
+			// 取得した投稿数がPOSTS_PER_PAGE未満なら、これ以上取得する必要がない
+			setHasMorePosts(postsData.posts.length === POSTS_PER_PAGE);
+			setIsLoadingMorePosts(false);
+		} else if (postsData === null && !postsLoading && postsPage > 0) {
+			// データがnullで、ロード中でなく、2ページ目以降の場合
+			setHasMorePosts(false);
+			setIsLoadingMorePosts(false);
+		}
+		// eslint-disable-next-line react-hooks/exhaustive-deps
+	}, [postsData, postsPage, postsLoading]);
+
+	// accountIdが変更されたら、投稿リストをリセット
+	useEffect(() => {
+		setPostsPage(0);
+		setAllPosts([]);
+		setHasMorePosts(true);
+	}, [accountId]);
+
+	// 次のページの投稿を取得
+	const loadMorePosts = useCallback(() => {
+		if (isLoadingMorePosts || !hasMorePosts || postsLoading) {
+			if (process.env.NODE_ENV === "development") {
+				console.log("loadMorePosts スキップ:", {
+					isLoadingMorePosts,
+					hasMorePosts,
+					postsLoading,
+				});
+			}
+			return;
+		}
+		if (process.env.NODE_ENV === "development") {
+			console.log("loadMorePosts 実行: 次のページを読み込み", postsPage + 1);
+		}
+		setIsLoadingMorePosts(true);
+		setPostsPage((prev) => prev + 1);
+	}, [isLoadingMorePosts, hasMorePosts, postsLoading, postsPage]);
+
+	// Intersection Observerでスクロール位置を監視
+	const isHandlingRef = useRef(false); // 重複実行を防ぐフラグ
+
+	useEffect(() => {
+		// 投稿が表示されていない、または読み込み中、またはもう読み込むものがない場合はObserverを設定しない
+		if (allPosts.length === 0 || isLoadingMorePosts || postsLoading || !hasMorePosts) {
+			if (process.env.NODE_ENV === "development") {
+				console.log("Observer 設定スキップ:", {
+					hasMorePosts,
+					isLoadingMorePosts,
+					postsLoading,
+					allPostsLength: allPosts.length,
+				});
+			}
+			return;
+		}
+
+		const observer = new IntersectionObserver(
+			(entries) => {
+				if (entries[0].isIntersecting && !isHandlingRef.current) {
+					isHandlingRef.current = true;
+					if (process.env.NODE_ENV === "development") {
+						console.log("Intersection Observer トリガー: 次のページを読み込み");
+					}
+					// loadMorePosts関数を使用
+					loadMorePosts();
+					// 少し遅延してフラグをリセット（次の読み込みを許可）
+					setTimeout(() => {
+						isHandlingRef.current = false;
+					}, 1000);
+				}
+			},
+			{ threshold: 0.1, rootMargin: "200px" }, // 200px手前でトリガー
+		);
+
+		const currentTarget = postsObserverTarget.current;
+		if (currentTarget) {
+			if (process.env.NODE_ENV === "development") {
+				console.log("Observer 設定完了:", {
+					hasMorePosts,
+					allPostsLength: allPosts.length,
+					targetExists: !!currentTarget,
+				});
+			}
+			observer.observe(currentTarget);
+		} else {
+			if (process.env.NODE_ENV === "development") {
+				console.warn("Observer target が見つかりません");
+			}
+		}
+
+		return () => {
+			if (currentTarget) {
+				observer.unobserve(currentTarget);
+			}
+		};
+	}, [hasMorePosts, isLoadingMorePosts, postsLoading, allPosts.length, loadMorePosts]);
 
 	// フィードを取得（自分自身のプロフィールの場合のみ）
 	const {
@@ -219,6 +345,9 @@ export default function UserProfilePage({
 	// ネットワークエラー時の再試行ボタン
 	const handleRetry = () => {
 		mutateUser();
+		// 投稿をリセットして最初から再取得
+		setPostsPage(0);
+		setAllPosts([]);
 		mutatePosts();
 		if (isOwnProfile) {
 			mutateFeed();
@@ -235,6 +364,13 @@ export default function UserProfilePage({
 		likeCount: number,
 		isLiked: boolean,
 	) => {
+		// allPostsを更新
+		setAllPosts((prev) =>
+			prev.map((post) =>
+				post.id === postId ? { ...post, likeCount, isLiked } : post,
+			),
+		);
+
 		// 投稿データを更新
 		mutatePosts((currentData) => {
 			if (!currentData) return currentData;
@@ -273,7 +409,9 @@ export default function UserProfilePage({
 
 	// 投稿更新のハンドラー
 	const handlePostUpdate = (postId: string) => {
-		// 投稿データを再取得
+		// 投稿データを再取得（最初のページから再取得）
+		setPostsPage(0);
+		setAllPosts([]);
 		mutatePosts();
 		if (isOwnProfile) {
 			mutateFeed();
@@ -283,6 +421,9 @@ export default function UserProfilePage({
 
 	// 投稿削除のハンドラー
 	const handlePostDelete = (postId: string) => {
+		// allPostsから削除
+		setAllPosts((prev) => prev.filter((post) => post.id !== postId));
+
 		// 投稿データから削除
 		mutatePosts((currentData) => {
 			if (!currentData) return currentData;
@@ -404,7 +545,7 @@ export default function UserProfilePage({
 	}
 
 	const user = userData.user;
-	const posts = postsData?.posts || [];
+	const posts = allPosts; // 無限スクロール用の累積投稿リストを使用
 	const feedPosts = feedData?.posts || [];
 	const followingUsers = followingData?.users || [];
 	const followersUsers = followersData?.users || [];
@@ -526,12 +667,36 @@ export default function UserProfilePage({
 							<p className="text-gray-600">まだ投稿がありません</p>
 						</div>
 					) : (
-						<PostCards
-							posts={posts}
-							onLikeChange={handleLikeChange}
-							onPostUpdate={handlePostUpdate}
-							onPostDelete={handlePostDelete}
-						/>
+						<>
+							<PostCards
+								posts={posts}
+								onLikeChange={handleLikeChange}
+								onPostUpdate={handlePostUpdate}
+								onPostDelete={handlePostDelete}
+							/>
+							{/* 無限スクロール用の監視要素 */}
+							{hasMorePosts && (
+								<div 
+									ref={postsObserverTarget} 
+									className="h-20 flex items-center justify-center py-4"
+									data-testid="infinite-scroll-trigger"
+								>
+									{isLoadingMorePosts && (
+										<div className="animate-pulse text-gray-500">読み込み中...</div>
+									)}
+									{!isLoadingMorePosts && process.env.NODE_ENV === "development" && (
+										<div className="text-xs text-gray-400">
+											スクロールして続きを読み込む ({posts.length}件表示中)
+										</div>
+									)}
+								</div>
+							)}
+							{!hasMorePosts && posts.length > 0 && (
+								<div className="text-center py-4 text-gray-500">
+									すべての投稿を表示しました
+								</div>
+							)}
+						</>
 					)}
 				</TabsContent>
 
